@@ -30,7 +30,12 @@ logging.basicConfig(
 from ingestion.loader import DatasetLoader          # noqa: E402
 from ingestion.validator import DatasetValidator, DatasetValidationError  # noqa: E402
 from ingestion.fx_converter import FXConverter     # noqa: E402
-from models.output import OUTPUT_HEADER            # noqa: E402
+from models.output import OUTPUT_HEADER, OutputRecord  # noqa: E402
+from simulator.recurring_detector import RecurringPatternDetector  # noqa: E402
+from simulator.timeline import CashflowTimelineBuilder  # noqa: E402
+from solver.decision_engine import DecisionEngine  # noqa: E402
+from evaluation.token_tracker import TokenTracker  # noqa: E402
+from evaluation.verify_output import verify_output_file  # noqa: E402
 
 console = Console()
 
@@ -122,18 +127,66 @@ def run(args: argparse.Namespace) -> int:
     # ── Build FX converter (shared across all requests) ────────────────────────
     fx = FXConverter(ds.exchange_rates_raw)
 
-    # ── Write output.csv stub (Phase 1 — to be filled by solver in later phases) ──
+    # ── Phases 3-5: Simulate, Optimize, and Synthesize Recommendations ─────────
+    console.print("\n[bold cyan]Evaluating requests through decision engine...[/bold cyan]")
+    detector = RecurringPatternDetector(fx_converter=fx)
+    timeline_builder = CashflowTimelineBuilder(fx_converter=fx, recurring_detector=detector)
+    engine = DecisionEngine()
+    tracker = TokenTracker.get_instance()
+    tracker.set_total_requests(len(ds.requests))
+
+    output_records: list[OutputRecord] = []
+    with console.status(f"[cyan]Processing {len(ds.requests)} evaluation requests...[/cyan]"):
+        for req in ds.requests:
+            profile = ds.profiles.get(req.user_id)
+            if not profile:
+                continue
+            events = ds.events_for_user(req.user_id)
+            options = ds.options_for_request(req.request_id)
+            timeline = timeline_builder.build_timeline(
+                profile=profile,
+                events=events,
+                request_date=req.request_date,
+                horizon_days=90,
+            )
+            record = engine.evaluate_request(
+                request=req,
+                profile=profile,
+                timeline=timeline,
+                options=options,
+                events_by_id=ds.events_by_id,
+            )
+            output_records.append(record)
+
+    # ── Write output.csv ───────────────────────────────────────────────────────
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="", encoding="utf-8") as f:
         f.write(OUTPUT_HEADER + "\n")
-        # TODO Phase 4+: write one row per request_id
+        for rec in output_records:
+            f.write(rec.to_csv_row() + "\n")
 
-    rprint(
-        f"\n[bold green]✓ Phase 1 complete.[/bold green] "
-        f"Output stub written to [cyan]{args.output}[/cyan]\n"
-        f"  Next: implement evidence layer (Phase 2) and simulator (Phase 3)."
+    console.print(f"[bold green][PASS] Generated {len(output_records)} predictions at {args.output}[/bold green]")
+
+    # ── Verify output invariants ───────────────────────────────────────────────
+    is_valid, errors = verify_output_file(
+        output_path=args.output,
+        expected_rows=len(ds.requests),
+        requests_path=args.dataset / "requests.csv",
     )
-    return 0
+    if is_valid:
+        console.print("[bold green][PASS] Output passed all schema and invariant checks.[/bold green]")
+    else:
+        console.print(f"[bold red][FAIL] Output verification found {len(errors)} error(s):[/bold red]")
+        for err in errors[:5]:
+            console.print(f"  * {err}")
+
+    # ── Save token usage report ────────────────────────────────────────────────
+    report_path1 = Path("code/evaluation/usage_report.md")
+    report_path2 = Path("evaluation/usage_report.md")
+    tracker.save_report(report_path1, report_path2)
+    console.print(f"[bold green][PASS] Saved usage report to {report_path1}[/bold green]")
+
+    return 0 if is_valid else 1
 
 
 def main() -> None:

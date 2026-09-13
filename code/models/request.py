@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 class EvaluationRequest(BaseModel):
     """A single purchase or payment evaluation request."""
 
-    model_config = {"frozen": True, "str_strip_whitespace": True}
+    model_config = {"frozen": True, "str_strip_whitespace": True, "extra": "ignore"}
 
     request_id: str
     user_id: str

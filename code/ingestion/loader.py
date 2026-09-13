@@ -62,8 +62,9 @@ class LoadedDataset:
 class DatasetLoader:
     """Loads all CSV files from the dataset directory into typed models."""
 
-    def __init__(self, dataset_dir: Path) -> None:
+    def __init__(self, dataset_dir: Path, requests_filename: str = "requests.csv") -> None:
         self.dataset_dir = Path(dataset_dir)
+        self.requests_filename = requests_filename
 
     def load(self) -> LoadedDataset:
         """Load and return the full dataset. Logs warnings for bad rows."""
@@ -123,7 +124,7 @@ class DatasetLoader:
             ds.events[uid].sort(key=lambda e: e.settlement_date)
 
     def _load_requests(self, ds: LoadedDataset) -> None:
-        for row in self._iter_csv("requests.csv"):
+        for row in self._iter_csv(self.requests_filename):
             try:
                 req = EvaluationRequest(**row)
                 ds.requests.append(req)

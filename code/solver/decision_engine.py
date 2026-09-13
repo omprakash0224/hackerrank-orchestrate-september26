@@ -14,8 +14,9 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 import logging
-from typing import Optional
+from typing import Optional, Any
 
+from ..models.event import FinancialEvent
 from ..models.request import EvaluationRequest
 from ..models.profile import FinancialProfile
 from ..models.payment_option import SellerPaymentOption
@@ -24,6 +25,7 @@ from ..models.plan import CandidatePlan, format_amount_str
 from ..models.enums import AffordabilityStatus, PaymentMethod
 from ..simulator.timeline import CashflowTimeline
 from ..simulator.balance_projector import BalanceProjector
+from ..explainer.rule_explainer import RuleExplainer
 from .safe_amount_calculator import SafeAmountCalculator
 from .full_payment_finder import FullPaymentFinder
 from .installment_evaluator import InstallmentEvaluator
@@ -32,18 +34,6 @@ from .spending_change_optimizer import SpendingChangeOptimizer
 from .plan_ranker import PlanRanker
 
 logger = logging.getLogger(__name__)
-
-
-def _format_date_uk(d: datetime.date) -> str:
-    """Format date as e.g. '15 November 2019' or '8 August 2025' matching sample style."""
-    return f"{d.day} {d.strftime('%B')} {d.year}"
-
-
-def _format_min_balance_str(amt: Decimal) -> str:
-    """Format minimum balance with commas if integer, else clean string."""
-    if amt == amt.to_integral():
-        return f"{int(amt):,}"
-    return f"{amt:,.2f}"
 
 
 class DecisionEngine:
@@ -58,6 +48,7 @@ class DecisionEngine:
         partial_builder: Optional[PartialPaymentBuilder] = None,
         spending_optimizer: Optional[SpendingChangeOptimizer] = None,
         ranker: Optional[PlanRanker] = None,
+        explainer: Optional[RuleExplainer] = None,
     ) -> None:
         self.projector = projector or BalanceProjector()
         self.safe_calculator = safe_calculator or SafeAmountCalculator()
@@ -68,6 +59,7 @@ class DecisionEngine:
             self.projector, self.installment_evaluator
         )
         self.ranker = ranker or PlanRanker()
+        self.explainer = explainer or RuleExplainer()
 
     def evaluate_request(
         self,
@@ -75,6 +67,7 @@ class DecisionEngine:
         profile: FinancialProfile,
         timeline: CashflowTimeline,
         options: list[SellerPaymentOption],
+        events_by_id: Optional[dict[str, Any]] = None,
     ) -> OutputRecord:
         """Run end-to-end evaluation on a request and return a compliant OutputRecord."""
         # Step 1: Calculate baseline safe amount on request_date
@@ -191,6 +184,7 @@ class DecisionEngine:
                 profile=profile,
                 safe_amount_today=safe_amount_today,
                 baseline_earliest_full=baseline_earliest_full,
+                events_by_id=events_by_id,
             )
 
         return self._build_recommendation_record(
@@ -199,6 +193,7 @@ class DecisionEngine:
             best_plan=best_plan,
             safe_amount_today=safe_amount_today,
             baseline_earliest_full=baseline_earliest_full,
+            events_by_id=events_by_id,
         )
 
     # ── Output record builders ─────────────────────────────────────────────────
@@ -210,57 +205,28 @@ class DecisionEngine:
         best_plan: CandidatePlan,
         safe_amount_today: Decimal,
         baseline_earliest_full: Optional[datetime.date],
+        events_by_id: Optional[dict[str, Any]] = None,
     ) -> OutputRecord:
         """Build an OutputRecord for an affordable recommendation."""
         method = best_plan.payment_method
-        curr = profile.home_currency
-        min_bal_str = _format_min_balance_str(profile.minimum_balance_to_keep)
-
-        # Determine status and earliest full date
         if method == PaymentMethod.FULL_PAYMENT and best_plan.spending_changes_count == 0:
             status = AffordabilityStatus.AFFORDABLE_NOW
             earliest_full = request.request_date
-            explanation = (
-                f"Pay {curr} {format_amount_str(request.requested_amount)} today. "
-                f"This leaves at least {curr} {min_bal_str} available over the next 90 days."
-            )
         elif method == PaymentMethod.WAIT:
             status = AffordabilityStatus.AFFORDABLE_LATER
             earliest_full = baseline_earliest_full
-            wait_date_str = _format_date_uk(best_plan.completion_date)
-            explanation = (
-                f"Pay {curr} {format_amount_str(request.requested_amount)} in full on {wait_date_str}. "
-                f"Paying earlier would take the balance below the {curr} {min_bal_str} minimum."
-            )
-        elif method == PaymentMethod.PARTIAL_PAYMENT:
-            status = AffordabilityStatus.AFFORDABLE_WITH_PLAN
-            earliest_full = baseline_earliest_full
-            p1_amt = format_amount_str(best_plan.schedule[0][1])
-            p2_amt = format_amount_str(best_plan.schedule[1][1])
-            p2_date_str = _format_date_uk(best_plan.schedule[1][0])
-            explanation = (
-                f"Pay {curr} {p1_amt} today and the remaining {curr} {p2_amt} on {p2_date_str}. "
-                f"This completes the full request and keeps the {curr} {min_bal_str} minimum protected."
-            )
-        elif method == PaymentMethod.INSTALLMENTS:
-            status = AffordabilityStatus.AFFORDABLE_WITH_PLAN
-            earliest_full = baseline_earliest_full
-            n_inst = best_plan.number_of_payments
-            inst_amt = format_amount_str(best_plan.schedule[0][1])
-            start_date_str = _format_date_uk(best_plan.first_payment_date)
-            explanation = (
-                f"Use {n_inst} installments of {curr} {inst_amt}, starting {start_date_str}. "
-                f"This leaves at least {curr} {min_bal_str} available."
-            )
         else:
-            # Full payment with spending changes
             status = AffordabilityStatus.AFFORDABLE_WITH_PLAN
             earliest_full = baseline_earliest_full
-            actions_desc = self._describe_actions(best_plan.spending_changes)
-            explanation = (
-                f"{actions_desc}, then pay {curr} {format_amount_str(request.requested_amount)} today. "
-                f"This leaves at least {curr} {min_bal_str} available."
-            )
+
+        explanation = self.explainer.explain(
+            request=request,
+            profile=profile,
+            best_plan=best_plan,
+            safe_amount_today=safe_amount_today,
+            baseline_earliest_full=baseline_earliest_full,
+            events_by_id=events_by_id,
+        )
 
         return OutputRecord(
             request_id=request.request_id,
@@ -279,24 +245,17 @@ class DecisionEngine:
         profile: FinancialProfile,
         safe_amount_today: Decimal,
         baseline_earliest_full: Optional[datetime.date],
+        events_by_id: Optional[dict[str, Any]] = None,
     ) -> OutputRecord:
         """Build an OutputRecord for an unaffordable request."""
-        curr = profile.home_currency
-        min_bal_str = _format_min_balance_str(profile.minimum_balance_to_keep)
-        deadline_str = _format_date_uk(request.desired_completion_date)
-
-        if baseline_earliest_full is None:
-            req_amt_str = format_amount_str(request.requested_amount)
-            safe_str = format_amount_str(safe_amount_today)
-            explanation = (
-                f"Do not proceed with the {curr} {req_amt_str} request. "
-                f"Although {curr} {safe_str} is available today, the full amount cannot be completed safely within 90 days."
-            )
-        else:
-            explanation = (
-                f"Do not make this payment by {deadline_str}. "
-                f"None of the available options keeps the {curr} {min_bal_str} minimum protected."
-            )
+        explanation = self.explainer.explain(
+            request=request,
+            profile=profile,
+            best_plan=None,
+            safe_amount_today=safe_amount_today,
+            baseline_earliest_full=baseline_earliest_full,
+            events_by_id=events_by_id,
+        )
 
         return OutputRecord(
             request_id=request.request_id,
@@ -308,16 +267,3 @@ class DecisionEngine:
             spending_changes_needed="none",
             decision_explanation=explanation,
         )
-
-    @staticmethod
-    def _describe_actions(actions: list) -> str:
-        """Create human-readable action clause matching sample requests."""
-        clauses = []
-        for a in actions:
-            if a.action_type == "stop":
-                clauses.append(f"stop flexible expenses for {a.event_id}")
-            elif a.action_type == "reduce_to":
-                clauses.append(f"reduce expenses for {a.event_id}")
-        if not clauses:
-            return "Adjust spending"
-        return " and ".join(clauses).capitalize()

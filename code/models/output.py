@@ -57,7 +57,12 @@ class OutputRecord(BaseModel):
             if self.earliest_date_for_full_payment is not None
             else ""
         )
-        amount = f"{self.amount_safe_to_pay:.2f}"
+        if self.amount_safe_to_pay == self.amount_safe_to_pay.to_integral():
+            amount = str(self.amount_safe_to_pay.quantize(Decimal("1")))
+        else:
+            amount = f"{self.amount_safe_to_pay:.2f}"
+            if amount.endswith("0") and "." in amount:
+                amount = amount[:-1]
         explanation = self._csv_escape(self.decision_explanation)
 
         return (

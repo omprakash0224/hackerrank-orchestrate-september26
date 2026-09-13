@@ -465,7 +465,7 @@ class TestDecisionEngine(unittest.TestCase):
         self.assertEqual(out.earliest_date_for_full_payment, req.request_date)
         self.assertEqual(out.amount_safe_to_pay, Decimal("2000"))
         self.assertEqual(out.spending_changes_needed, "none")
-        self.assertIn("Pay USD 2000 today", out.decision_explanation)
+        self.assertIn("Pay USD 2,000 today", out.decision_explanation)
 
     def test_affordable_later_wait_flow(self) -> None:
         # Buffer today 500, payday Jan 15 gives 3000
