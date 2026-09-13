@@ -1,1 +1,98 @@
-{}
+{
+  "image_01": {
+    "amount": "4365000",
+    "currency": "IDR",
+    "raw_text": "```json\n{\"amount\": \"4365000\", \"currency\": \"IDR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_02": {
+    "amount": "100000.00",
+    "currency": "INR",
+    "raw_text": "{\"amount\": \"100000.00\", \"currency\": \"INR\"}",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_03": {
+    "amount": "41272.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"41272.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_04": {
+    "amount": "2854.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"2854.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_05": {
+    "amount": "704.05",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"704.05\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_06": {
+    "amount": "1995.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"1995.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_07": {
+    "amount": "8528.10",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"8528.10\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_08": {
+    "amount": "15339.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"15339.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_09": {
+    "amount": "723.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"723.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_10": {
+    "amount": "79679.26",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"79679.26\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_11": {
+    "amount": "3650.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"3650.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_12": {
+    "amount": "33.50",
+    "currency": "USD",
+    "raw_text": "```json\n{\"amount\": \"33.50\", \"currency\": \"USD\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_13": {
+    "amount": "2298",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"2298\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_14": {
+    "amount": "4543.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"4543.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_15": {
+    "amount": "9968.00",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"9968.00\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "image_16": {
+    "amount": "393.22",
+    "currency": "INR",
+    "raw_text": "```json\n{\"amount\": \"393.22\", \"currency\": \"INR\"}\n```",
+    "model_used": "gemini-3.5-flash-lite"
+  }
+}

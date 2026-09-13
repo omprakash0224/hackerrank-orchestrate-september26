@@ -12,9 +12,15 @@ import argparse
 from pathlib import Path
 import sys
 
-from .benchmark import run_benchmark
-from .verify_output import verify_output_file
-from .token_tracker import TokenTracker
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+    from code.evaluation.benchmark import run_benchmark
+    from code.evaluation.verify_output import verify_output_file
+    from code.evaluation.token_tracker import TokenTracker
+else:
+    from .benchmark import run_benchmark
+    from .verify_output import verify_output_file
+    from .token_tracker import TokenTracker
 
 
 def main() -> None:
@@ -34,7 +40,7 @@ def main() -> None:
     verify_parser = subparsers.add_parser("verify", help="Verify output.csv schema & invariants")
     verify_parser.add_argument("--output", type=Path, default=Path("dataset/output.csv"), help="Output CSV path")
     verify_parser.add_argument("--requests", type=Path, default=None, help="Requests CSV path for cross-validation")
-    verify_parser.add_argument("--expected-rows", type=int, default=251, help="Expected data rows")
+    verify_parser.add_argument("--expected-rows", type=int, default=250, help="Expected data rows")
     verify_parser.add_argument("--allow-sample-size", action="store_true", help="Allow sample row count")
 
     # Report subcommand

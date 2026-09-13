@@ -23,9 +23,13 @@ from typing import Optional
 from ..models.event import FinancialEvent
 from ..models.profile import FinancialProfile
 from ..models.enums import EventStatus, EventDirection
-from ..evidence.conflict_resolver import ReconciledEvent
+from ..evidence.conflict_resolver import (
+    ReconciledEvent,
+    ConflictResolver,
+    ConflictResolutionContext,
+)
 from ..ingestion.fx_converter import FXConverter
-from .recurring_detector import ProjectedEvent
+from .recurring_detector import ProjectedEvent, RecurringDetector, RecurringPatternDetector
 
 logger = logging.getLogger(__name__)
 
@@ -108,16 +112,66 @@ class CashflowTimeline:
 class TimelineBuilder:
     """Builds a CashflowTimeline for a user request."""
 
+    def __init__(
+        self,
+        fx_converter: Optional[FXConverter] = None,
+        recurring_detector: Optional[RecurringDetector] = None,
+        conflict_resolver: Optional[ConflictResolver] = None,
+    ) -> None:
+        self.fx_converter = fx_converter
+        self.recurring_detector = recurring_detector
+        self.conflict_resolver = conflict_resolver or ConflictResolver()
+
     def build_timeline(
         self,
         profile: FinancialProfile,
-        reconciled_events: list[ReconciledEvent],
-        recurring_projections: list[ProjectedEvent],
-        request_date: datetime.date,
+        reconciled_events: Optional[list[ReconciledEvent]] = None,
+        recurring_projections: Optional[list[ProjectedEvent]] = None,
+        request_date: Optional[datetime.date] = None,
         fx_converter: Optional[FXConverter] = None,
         horizon_days: int = 90,
+        events: Optional[list[FinancialEvent]] = None,
+        messages: Optional[list] = None,
+        ocr_results: Optional[dict] = None,
     ) -> CashflowTimeline:
         """Construct the 90-day day-by-day cashflow timeline."""
+        if request_date is None:
+            raise ValueError("request_date is required to build a cashflow timeline")
+
+        converter = fx_converter or self.fx_converter
+
+        # 1. Resolve raw events to ReconciledEvents if not provided directly
+        if reconciled_events is None:
+            if events is not None:
+                ctx = ConflictResolutionContext(
+                    user_id=profile.user_id,
+                    events=events,
+                    messages=messages or [],
+                    ocr_results=ocr_results or {},
+                )
+                reconciled_events = self.conflict_resolver.reconcile(ctx)
+            else:
+                reconciled_events = []
+
+        # 2. Detect & project recurring events if not provided directly
+        if recurring_projections is None:
+            if self.recurring_detector is not None:
+                raw_events = events or [rev.original for rev in reconciled_events]
+                streams = self.recurring_detector.detect_streams(
+                    user_id=profile.user_id,
+                    events=raw_events,
+                    profile=profile,
+                    request_date=request_date,
+                )
+                recurring_projections = self.recurring_detector.project_events(
+                    streams=streams,
+                    request_date=request_date,
+                    horizon_days=horizon_days,
+                    existing_events=raw_events,
+                )
+            else:
+                recurring_projections = []
+
         user_id = profile.user_id
         home_currency = profile.home_currency
         initial_balance = profile.current_available_balance
@@ -125,7 +179,7 @@ class TimelineBuilder:
 
         end_date = request_date + datetime.timedelta(days=horizon_days)
 
-        # 1. Initialize empty DailyCashflow for every date in [request_date, end_date]
+        # Initialize empty DailyCashflow for every date in [request_date, end_date]
         daily_cashflows: dict[datetime.date, DailyCashflow] = {}
         dates: list[datetime.date] = []
         cur_date = request_date
@@ -134,7 +188,7 @@ class TimelineBuilder:
             daily_cashflows[cur_date] = DailyCashflow(date=cur_date)
             cur_date += datetime.timedelta(days=1)
 
-        # 2. Process reconciled events
+        # Process reconciled events
         for rev in reconciled_events:
             # Check if excluded by conflict resolver (e.g. cancelled, non-cash, scam)
             if not rev.include_in_cashflow:
@@ -146,9 +200,9 @@ class TimelineBuilder:
 
             # Convert currency to home_currency if needed
             converted_amt = amt
-            if fx_converter and rev.currency != home_currency:
+            if converter and rev.currency != home_currency:
                 try:
-                    converted_amt = fx_converter.convert(
+                    converted_amt = converter.convert(
                         amt, rev.currency, home_currency, rev.settlement_date
                     )
                 except Exception as exc:
@@ -218,15 +272,15 @@ class TimelineBuilder:
                         # Exclude pending credits, bonuses, commissions, refunds
                         logger.debug("Excluded unconfirmed credit %s on %s", rev.original.event_id, event_date)
 
-        # 3. Process projected recurring events
+        # Process projected recurring events
         for proj in recurring_projections:
             if proj.settlement_date <= request_date or proj.settlement_date > end_date:
                 continue
 
             amt = proj.amount
-            if fx_converter and proj.currency != home_currency:
+            if converter and proj.currency != home_currency:
                 try:
-                    amt = fx_converter.convert(amt, proj.currency, home_currency, proj.settlement_date)
+                    amt = converter.convert(amt, proj.currency, home_currency, proj.settlement_date)
                 except Exception as exc:
                     logger.warning("FX conversion failed for projection %s: %s", proj.event_id, exc)
 
@@ -288,3 +342,8 @@ class TimelineBuilder:
             min_baseline_date=min_date,
             min_baseline_buffer=min_buffer,
         )
+
+
+# Alias for backward/forward compatibility
+CashflowTimelineBuilder = TimelineBuilder
+

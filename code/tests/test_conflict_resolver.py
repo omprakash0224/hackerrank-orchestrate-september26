@@ -22,6 +22,7 @@ from code.evidence.message_parser import (
     MSG_SALARY_END,
     MSG_BONUS_PENDING,
     MSG_FAILED_DEBIT,
+    MSG_PRIZE_SCAM,
 )
 from code.evidence.conflict_resolver import (
     ConflictResolver,
@@ -101,8 +102,8 @@ class TestConflictResolver(unittest.TestCase):
             request_id=None,
             related_event_id="ev_debit",
             sent_at=datetime.datetime(2026, 1, 11, 10, 0),
-            message_type=MSG_FAILED_DEBIT,
-            notes="Payment failed and cancelled by merchant",
+            message_type=MSG_PRIZE_SCAM,
+            notes="Scam prize cancelled",
         )
         ctx = ConflictResolutionContext(
             user_id=self.user_id,
@@ -131,7 +132,7 @@ class TestConflictResolver(unittest.TestCase):
             message_id="m1",
             user_id=self.user_id,
             request_id=None,
-            related_event_id="ev_salary",
+            related_event_id=None,
             sent_at=datetime.datetime(2026, 1, 10, 9, 0),
             message_type=MSG_SALARY_DELAYED,
             effective_date=datetime.date(2026, 1, 20),
@@ -141,7 +142,7 @@ class TestConflictResolver(unittest.TestCase):
             message_id="m2",
             user_id=self.user_id,
             request_id=None,
-            related_event_id="ev_salary",
+            related_event_id=None,
             sent_at=datetime.datetime(2026, 1, 12, 14, 0),
             message_type=MSG_SALARY_DELAYED,
             effective_date=datetime.date(2026, 1, 25),

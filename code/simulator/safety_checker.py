@@ -1,4 +1,4 @@
-"""code/simulator/safety_checker.py — Liquidity Invariant Verifier.
+﻿"""code/simulator/safety_checker.py — Liquidity Invariant Verifier.
 
 Verifies the mathematical safety invariant:
   forall t in [request_date, request_date + 90 days]: B(t) >= minimum_balance_to_keep
@@ -98,25 +98,51 @@ class SafetyChecker:
         spending_changes: Optional[list[SpendingAction]] = None,
         max_date: Optional[datetime.date] = None,
     ) -> Optional[datetime.date]:
-        """Find the first date in [request_date, t0 + 90] where paying `amount` in full is safe.
+        """Find the first date in [request_date, t0+90] where paying `amount` is safe.
 
-        Returns None if paying `amount` never becomes safe within the horizon.
+        A date D is safe if:
+          1. The projected balance on D minus the payment amount >= minimum_balance_to_keep.
+          2. Paying on D does not create NEW violations for any date T >= D beyond
+             those that already exist in the baseline (pre-payment) trajectory.
+
+        Returns None if no such date exists within the horizon.
         """
         if amount <= Decimal("0"):
             return timeline.request_date
+
+        # Pre-compute baseline trajectory violations (already below minimum before payment)
+        baseline_traj = self.projector.simulate(
+            timeline=timeline,
+            spending_changes=spending_changes,
+        )
+        baseline_violation_dates: set[datetime.date] = {d for d, _ in baseline_traj.violations}
 
         # Scan forward day by day
         for candidate_date in timeline.dates:
             if max_date and candidate_date > max_date:
                 break
 
+            # Quick pre-check: balance on candidate date must be sufficient
+            bal_at_candidate = baseline_traj.daily_balances.get(
+                candidate_date, timeline.initial_balance
+            )
+            if bal_at_candidate - amount < timeline.minimum_balance_to_keep:
+                continue
+
+            # Full simulation: add the payment on this candidate date
             entry = PaymentPlanEntry(payment_date=candidate_date, amount=amount)
             traj = self.projector.simulate(
                 timeline=timeline,
                 payment_plan_entries=[entry],
                 spending_changes=spending_changes,
             )
-            if traj.is_safe:
+
+            # Accept if payment creates no NEW violations for dates >= candidate_date
+            new_violations = [
+                d for d, _ in traj.violations
+                if d >= candidate_date and d not in baseline_violation_dates
+            ]
+            if not new_violations:
                 return candidate_date
 
         return None

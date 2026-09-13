@@ -78,6 +78,9 @@ class ProjectedEvent:
 class RecurringDetector:
     """Detects recurring patterns and projects them forward 90 days."""
 
+    def __init__(self, fx_converter: Optional[object] = None) -> None:
+        self.fx_converter = fx_converter
+
     def detect_streams(
         self,
         user_id: str,
@@ -167,8 +170,18 @@ class RecurringDetector:
         salary_amendments: list[SalaryAmendment],
         request_date: Optional[datetime.date] = None,
     ) -> Optional[RecurringStream]:
-        """Identify confirmed monthly salary income stream."""
-        # Find settled salary/income credits
+        """Identify confirmed monthly salary income stream.
+
+        Uses the modal (most frequent) salary amount and anchor day to avoid
+        one-off bonus, arrears, or partial payments overriding the regular payroll.
+        """
+        from collections import Counter
+
+        # Find settled salary/income credits (excluding irregular gig / freelance payouts)
+        GIG_TERMS = (
+            "platform payout", "marketplace payout", "app earnings",
+            "freelance", "milestone", "invoice", "project payment", "commission",
+        )
         salary_events = [
             e for e in events
             if e.user_id == user_id
@@ -179,6 +192,7 @@ class RecurringDetector:
                 or "salary" in e.description.lower()
                 or "payroll" in e.description.lower()
             )
+            and not any(g in e.description.lower() for g in GIG_TERMS)
             and e.amount is not None
             and e.amount > 0
             and (request_date is None or e.settlement_date <= request_date)
@@ -190,18 +204,75 @@ class RecurringDetector:
         # Sort chronologically
         salary_events.sort(key=lambda e: e.settlement_date)
 
-        # Default salary day is 15th of the month unless historical events show otherwise
+        # Check if the latest past salary indicates employment ended
+        if salary_events:
+            last_desc = salary_events[-1].description.lower()
+            if any(term in last_desc for term in ("final", "ended", "termination", "severance")):
+                logger.info("Salary stream ended for user %s (%s)", user_id, salary_events[-1].description)
+                return None
+
+        # Default values
         anchor_day = 15
         salary_amount = Decimal("0")
         salary_currency = profile.home_currency
         latest_event_id = ""
 
         if salary_events:
-            latest = salary_events[-1]
-            anchor_day = latest.settlement_date.day
-            salary_amount = latest.amount or Decimal("0")
-            salary_currency = latest.currency
-            latest_event_id = latest.event_id
+            # Identify the regular monthly salary using modal detection.
+            # Step 1: Find the most common anchor day (day of month)
+            day_counts = Counter(e.settlement_date.day for e in salary_events)
+            modal_day = day_counts.most_common(1)[0][0]
+
+            # Step 2: Among events on the modal day, find the most common amount
+            modal_day_events = [e for e in salary_events if e.settlement_date.day == modal_day]
+            if modal_day_events:
+                # Round amounts to nearest 1000 for clustering similar salaries
+                rounded_amounts = [round(float(e.amount or 0) / 1000) * 1000 for e in modal_day_events]
+                amount_counts = Counter(rounded_amounts)
+                modal_amount_rounded = amount_counts.most_common(1)[0][0]
+
+                # Pick the most recent regular-salary event (amount within 5% of modal)
+                regular_events = [
+                    e for e in modal_day_events
+                    if abs(float(e.amount or 0) - modal_amount_rounded) <= max(500, modal_amount_rounded * 0.05)
+                ]
+                if regular_events:
+                    regular_events.sort(key=lambda e: e.settlement_date)
+                    latest = regular_events[-1]
+                    anchor_day = modal_day
+                    salary_amount = latest.amount or Decimal("0")
+                    salary_currency = latest.currency
+                    latest_event_id = latest.event_id
+            if salary_amount <= Decimal("0"):
+                # Fallback: use the latest event
+                latest = salary_events[-1]
+                anchor_day = latest.settlement_date.day
+                salary_amount = latest.amount or Decimal("0")
+                salary_currency = latest.currency
+                latest_event_id = latest.event_id
+
+        # Future confirmed scheduled salary gives the true full unprorated monthly salary
+        future_salary = [
+            e for e in events
+            if e.user_id == user_id
+            and e.is_credit
+            and (
+                e.category.lower() in ("salary", "income")
+                or e.event_type.lower() in ("salary", "income")
+                or "salary" in e.description.lower()
+                or "payroll" in e.description.lower()
+            )
+            and e.amount is not None
+            and e.amount > 0
+            and e.status == EventStatus.SCHEDULED
+            and (request_date is None or e.settlement_date > request_date)
+        ]
+        if future_salary:
+            latest_future = future_salary[0]
+            salary_amount = latest_future.amount or salary_amount
+            anchor_day = latest_future.settlement_date.day
+            salary_currency = latest_future.currency
+            latest_event_id = latest_future.event_id
 
         # Check for message amendments (Tier 1 & Tier 2 updates from messages.csv)
         if salary_amendments:
@@ -251,7 +322,12 @@ class RecurringDetector:
         rent_increases: dict[str, Decimal],
         request_date: Optional[datetime.date] = None,
     ) -> list[RecurringStream]:
-        """Detect recurring debit expenses appearing at regular monthly/weekly intervals."""
+        """Detect recurring debit expenses appearing at regular monthly/weekly intervals.
+
+        Two-pass approach:
+          Pass 1: Fixed recurring categories grouped by (category, description) — exact match.
+          Pass 2: Variable essential categories grouped by category only — aggregate conservatively.
+        """
         # Filter past debits with positive amounts
         past_debits = [
             e for e in events
@@ -264,21 +340,38 @@ class RecurringDetector:
             and (request_date is None or e.settlement_date <= request_date)
         ]
 
-        # Group by (category, description)
-        groups: dict[tuple[str, str], list[FinancialEvent]] = {}
-        for e in past_debits:
-            key = (e.category.lower().strip(), e.description.strip())
-            groups.setdefault(key, []).append(e)
-
         streams: list[RecurringStream] = []
 
-        for (category, desc), ev_list in groups.items():
-            # Sort chronologically
+        # ── Pass 1: Fixed/subscription categories grouped by (category, description) ──
+        FIXED_RECURRING_CATEGORIES = {
+            "rent", "housing", "mortgage", "utilities", "loan", "debt_repayment",
+            "subscription", "cloud_storage", "insurance", "education", "tuition",
+            "streaming", "gym", "membership", "family_support", "music_subscription",
+            "delivery_membership", "storage",
+        }
+        RECURRING_TERMS = (
+            "rent", "loan", "subscription", "storage", "standing order", "insurance",
+            "tuition", "membership", "instalment", "installment", "utility", "utilities",
+            "family support", "mortgage", "repayment"
+        )
+
+        # Group by (category, description) for fixed categories
+        fixed_groups: dict[tuple[str, str], list[FinancialEvent]] = {}
+        for e in past_debits:
+            key = (e.category.lower().strip(), e.description.strip())
+            fixed_groups.setdefault(key, []).append(e)
+
+        for (category, desc), ev_list in fixed_groups.items():
+            is_recurring_kind = (
+                category in FIXED_RECURRING_CATEGORIES
+                or any(t in desc.lower() for t in RECURRING_TERMS)
+            )
+            if not is_recurring_kind:
+                continue
+
             ev_list.sort(key=lambda x: x.settlement_date)
             count = len(ev_list)
 
-            # Need at least 2 occurrences to establish a recurring pattern
-            # Or 1 occurrence if it's rent/mortgage/loan with explicit monthly recurrence in description
             is_clear_monthly = count >= 2 or any(
                 term in desc.lower() for term in ("rent", "loan", "subscription", "storage", "standing order")
             )
@@ -295,13 +388,11 @@ class RecurringDetector:
                 amount = rent_increases[latest_id]
                 logger.info("Applied rent increase to event %s: new amount %s", latest_id, amount)
 
-            # Flexibility resolution
             flexibility_str = "fixed"
             if latest.flexibility:
                 flexibility_str = latest.flexibility.value
             min_allowed = latest.minimum_allowed_amount
 
-            # Analyze cadence
             cadence, anchor_day = self._infer_cadence(ev_list)
 
             stream = RecurringStream(
@@ -320,6 +411,113 @@ class RecurringDetector:
                 occurrences_count=count,
             )
             streams.append(stream)
+
+        # Track categories already handled in pass 1 to avoid duplication
+        fixed_stream_categories = {s.category.lower() for s in streams}
+
+        # ── Pass 2: Variable essential categories grouped by category only ──────
+        # These have variable descriptions per occurrence but happen regularly.
+        # Use the median monthly spend as a conservative projection.
+        VARIABLE_ESSENTIAL_CATEGORIES = {
+            "groceries", "transport", "dining", "healthcare", "entertainment",
+            "shopping", "personal_care", "clothing",
+        }
+        # Flexibility mapping — user profile drives which are stoppable/reducible
+        VARIABLE_FLEXIBILITY = {
+            "groceries": "fixed",          # essential — protect
+            "transport": "fixed",          # essential — protect
+            "healthcare": "fixed",         # essential — protect
+            "dining": "reducible",         # lifestyle — can reduce
+            "entertainment": "stoppable",  # lifestyle — can stop
+            "shopping": "stoppable",       # lifestyle — can stop
+            "personal_care": "reducible",
+            "clothing": "stoppable",
+        }
+
+        # Group by category
+        cat_groups: dict[str, list[FinancialEvent]] = {}
+        for e in past_debits:
+            cat = e.category.lower().strip()
+            if cat in VARIABLE_ESSENTIAL_CATEGORIES and cat not in fixed_stream_categories:
+                cat_groups.setdefault(cat, []).append(e)
+
+        for category, ev_list in cat_groups.items():
+            ev_list.sort(key=lambda x: x.settlement_date)
+            count = len(ev_list)
+
+            # Need at least 2 occurrences
+            if count < 2:
+                continue
+
+            # ── Determine monthly cadence and conservative monthly aggregate ──
+            # Compute how many calendar months are spanned
+            first_date = ev_list[0].settlement_date
+            last_date = ev_list[-1].settlement_date
+            months_spanned = (
+                (last_date.year - first_date.year) * 12
+                + (last_date.month - first_date.month) + 1
+            )
+            months_spanned = max(1, months_spanned)
+
+            # Average occurrences per month
+            avg_per_month = count / months_spanned
+
+            # Conservative median individual transaction amount
+            amounts = sorted(e.amount for e in ev_list if e.amount)
+            if not amounts:
+                continue
+            median_amount = amounts[len(amounts) // 2]
+
+            # Determine currency (most common)
+            from collections import Counter
+            currency_counts = Counter(e.currency for e in ev_list)
+            currency = currency_counts.most_common(1)[0][0]
+
+            # Representative event for metadata
+            latest = ev_list[-1]
+            latest_id = latest.event_id
+
+            flexibility_str = VARIABLE_FLEXIBILITY.get(category, "reducible")
+
+            # Override flexibility based on profile — if category is protected, mark fixed
+            protected = [c.strip().lower() for c in profile.expense_categories_to_protect]
+            willingness_stop = [c.strip().lower() for c in profile.expense_categories_user_is_willing_to_stop]
+            willingness_reduce = [c.strip().lower() for c in profile.expense_categories_user_is_willing_to_reduce]
+            if category in protected:
+                flexibility_str = "fixed"
+            elif category in willingness_stop:
+                flexibility_str = "stoppable"
+            elif category in willingness_reduce:
+                flexibility_str = "reducible"
+
+            # Project variable spending monthly at the median transaction amount.
+            # "Conservatively" per spec means using a typical single-occurrence amount,
+            # not the sum of all transactions in a month (which would over-penalize
+            # and make valid installment plans appear unsafe).
+            cadence = RecurringCadence.MONTHLY
+            anchor_day = latest.settlement_date.day
+            proj_amount = median_amount
+
+            stream = RecurringStream(
+                stream_id=f"stream_var_{category}_{latest_id}",
+                user_id=user_id,
+                category=category,
+                description=f"Projected {category} (recurring)",
+                amount=proj_amount,
+                currency=currency,
+                cadence=cadence,
+                anchor_day=anchor_day,
+                flexibility=flexibility_str,
+                minimum_allowed_amount=None,
+                latest_event_id=latest_id,
+                is_income=False,
+                occurrences_count=count,
+            )
+            streams.append(stream)
+            logger.debug(
+                "Variable stream %s: %s %s cadence=%s avg_per_month=%.1f",
+                category, proj_amount, currency, cadence, avg_per_month,
+            )
 
         return streams
 
@@ -357,50 +555,46 @@ class RecurringDetector:
         """Generate monthly projections from request_date + 1 to end_date."""
         projected: list[ProjectedEvent] = []
 
-        # Iterate through upcoming 4 calendar months
+        # Iterate through upcoming 4 calendar months including current month
         cur_year = request_date.year
         cur_month = request_date.month
 
         for _ in range(4):
-            # Advance month
-            cur_month += 1
-            if cur_month > 12:
-                cur_month = 1
-                cur_year += 1
-
             # Clamp anchor day to month length (e.g. Feb 28/29, Apr 30)
             max_days = calendar.monthrange(cur_year, cur_month)[1]
             day = min(stream.anchor_day, max_days)
             proj_date = datetime.date(cur_year, cur_month, day)
 
-            if proj_date <= request_date:
-                continue
-            if proj_date > end_date:
+            if proj_date > request_date and proj_date <= end_date:
+                # Check if this category is already scheduled on this date
+                if (stream.category.lower(), proj_date) not in existing_keys:
+                    direction = "credit" if stream.is_income else "debit"
+                    is_flex = stream.flexibility in ("stoppable", "reducible", "reducible_or_stoppable")
+
+                    proj = ProjectedEvent(
+                        event_id=f"proj_{stream.category}_{proj_date}",
+                        user_id=stream.user_id,
+                        category=stream.category,
+                        description=stream.description,
+                        amount=stream.amount,
+                        currency=stream.currency,
+                        settlement_date=proj_date,
+                        direction=direction,
+                        is_flexible=is_flex,
+                        flexibility=stream.flexibility,
+                        minimum_allowed_amount=stream.minimum_allowed_amount,
+                        source_stream_id=stream.stream_id,
+                        source_event_id=stream.latest_event_id,
+                    )
+                    projected.append(proj)
+            elif proj_date > end_date:
                 break
 
-            # Check if this category is already scheduled on this date
-            if (stream.category.lower(), proj_date) in existing_keys:
-                continue
-
-            direction = "credit" if stream.is_income else "debit"
-            is_flex = stream.flexibility in ("stoppable", "reducible", "reducible_or_stoppable")
-
-            proj = ProjectedEvent(
-                event_id=f"proj_{stream.category}_{proj_date}",
-                user_id=stream.user_id,
-                category=stream.category,
-                description=stream.description,
-                amount=stream.amount,
-                currency=stream.currency,
-                settlement_date=proj_date,
-                direction=direction,
-                is_flexible=is_flex,
-                flexibility=stream.flexibility,
-                minimum_allowed_amount=stream.minimum_allowed_amount,
-                source_stream_id=stream.stream_id,
-                source_event_id=stream.latest_event_id,
-            )
-            projected.append(proj)
+            # Advance month
+            cur_month += 1
+            if cur_month > 12:
+                cur_month = 1
+                cur_year += 1
 
         return projected
 
@@ -462,11 +656,6 @@ class RecurringDetector:
         cur_month = request_date.month
 
         for _ in range(4):
-            cur_month += 1
-            if cur_month > 12:
-                cur_month = 1
-                cur_year += 1
-
             max_days = calendar.monthrange(cur_year, cur_month)[1]
             for target_day in sorted([min(d1, max_days), min(d2, max_days)]):
                 proj_date = datetime.date(cur_year, cur_month, target_day)
@@ -498,4 +687,14 @@ class RecurringDetector:
                     )
                 )
 
+            # Advance month
+            cur_month += 1
+            if cur_month > 12:
+                cur_month = 1
+                cur_year += 1
+
         return projected
+
+
+# Alias for backward/forward compatibility
+RecurringPatternDetector = RecurringDetector

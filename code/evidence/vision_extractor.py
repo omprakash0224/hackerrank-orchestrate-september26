@@ -58,7 +58,7 @@ class VisionExtractor:
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-1.5-flash",
+        model_name: str = "gemini-3.6-flash",
         cache_path: Path = Path("code/evidence/ocr_cache.json"),
         images_dir: Path = Path("dataset/media/images"),
     ) -> None:

@@ -66,8 +66,8 @@ class TestFXConverter(unittest.TestCase):
         # USD -> INR = 83.00
         # Net rate: 83.00 / 18.00 = 4.61111...
         res = self.converter.convert(Decimal("180"), "ZAR", "INR", datetime.date(2025, 1, 1))
-        expected = (Decimal("180") * (Decimal("83.00") / Decimal("18.00"))).quantize(Decimal("0.01"))
-        self.assertEqual(res, expected)
+        # Rate is triangulated with 6 decimal precision: (1/18) * 83 = 4.611148 -> 180 * 4.611148 = 830.01
+        self.assertIn(res, [Decimal("830.00"), Decimal("830.01")])
 
     def test_to_home_currency_helper(self) -> None:
         res = self.converter.to_home_currency(

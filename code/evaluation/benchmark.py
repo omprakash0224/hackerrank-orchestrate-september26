@@ -34,7 +34,6 @@ if __package__ is None or __package__ == "":
     from code.ingestion.fx_converter import FXConverter
     from code.simulator.timeline import CashflowTimelineBuilder
     from code.simulator.recurring_detector import RecurringPatternDetector
-    from code.solver.decision_engine import DecisionEngine
     from code.models.output import OutputRecord
     from code.models.plan import format_amount_str
 else:
@@ -42,7 +41,6 @@ else:
     from ..ingestion.fx_converter import FXConverter
     from ..simulator.timeline import CashflowTimelineBuilder
     from ..simulator.recurring_detector import RecurringPatternDetector
-    from ..solver.decision_engine import DecisionEngine
     from ..models.output import OutputRecord
     from ..models.plan import format_amount_str
 
@@ -79,7 +77,31 @@ def run_benchmark(
     fx = FXConverter(ds.exchange_rates_raw)
     detector = RecurringPatternDetector(fx_converter=fx)
     timeline_builder = CashflowTimelineBuilder(fx_converter=fx, recurring_detector=detector)
+    try:
+        from ..solver.decision_engine import DecisionEngine
+        from ..evidence.message_parser import MessageParser, group_by_user
+    except (ImportError, ValueError):
+        from code.solver.decision_engine import DecisionEngine
+        from code.evidence.message_parser import MessageParser, group_by_user
     engine = DecisionEngine()
+
+    import json
+    msg_parser = MessageParser()
+    parsed_msgs = msg_parser.parse_all(ds.messages_raw)
+    msgs_by_user = group_by_user(parsed_msgs)
+
+    ocr_by_event_id: dict[str, dict] = {}
+    ocr_cache_path = Path("code/evidence/ocr_cache.json")
+    images_csv_path = dataset_dir / "images.csv"
+    if ocr_cache_path.exists() and images_csv_path.exists():
+        with open(ocr_cache_path, "r", encoding="utf-8") as f:
+            ocr_cache = json.load(f)
+        with open(images_csv_path, "r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                img_id = row.get("image_id")
+                ev_id = row.get("related_event_id")
+                if img_id in ocr_cache and ev_id:
+                    ocr_by_event_id[ev_id] = ocr_cache[img_id]
 
     results: list[dict] = []
     status_matches = 0
@@ -108,6 +130,8 @@ def run_benchmark(
             events=user_events,
             request_date=req.request_date,
             horizon_days=90,
+            messages=msgs_by_user.get(req.user_id, []),
+            ocr_results=ocr_by_event_id,
         )
 
         # Run decision engine

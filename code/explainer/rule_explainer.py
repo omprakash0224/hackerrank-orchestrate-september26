@@ -91,7 +91,7 @@ class RuleExplainer:
         req_amt_str = format_explanation_amount(request.requested_amount)
 
         # Unaffordable / Not recommended
-        if best_plan is None or best_plan.completion_date > request.desired_completion_date:
+        if best_plan is None or best_plan.payment_method == PaymentMethod.NOT_RECOMMENDED:
             return self._explain_not_affordable(
                 request=request,
                 profile=profile,

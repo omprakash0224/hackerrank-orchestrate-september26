@@ -15,6 +15,7 @@ from .timeline import (
     DailyCashflow,
     CashflowTimeline,
     TimelineBuilder,
+    CashflowTimelineBuilder,
 )
 from .balance_projector import (
     PaymentPlanEntry,
@@ -27,15 +28,19 @@ from .safety_checker import (
     SafetyChecker,
 )
 
+RecurringPatternDetector = RecurringDetector
+
 __all__ = [
     "RecurringCadence",
     "RecurringStream",
     "ProjectedEvent",
     "RecurringDetector",
+    "RecurringPatternDetector",
     "CashflowItem",
     "DailyCashflow",
     "CashflowTimeline",
     "TimelineBuilder",
+    "CashflowTimelineBuilder",
     "PaymentPlanEntry",
     "SpendingAction",
     "TrajectoryResult",

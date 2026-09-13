@@ -18,6 +18,16 @@ from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 
+import sys
+
+# Ensure UTF-8 output on Windows consoles
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ---------------------------------------------------------------------------
 # Bootstrap logging before any local imports (which may log at import time)
 # ---------------------------------------------------------------------------
@@ -27,15 +37,27 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-from ingestion.loader import DatasetLoader          # noqa: E402
-from ingestion.validator import DatasetValidator, DatasetValidationError  # noqa: E402
-from ingestion.fx_converter import FXConverter     # noqa: E402
-from models.output import OUTPUT_HEADER, OutputRecord  # noqa: E402
-from simulator.recurring_detector import RecurringPatternDetector  # noqa: E402
-from simulator.timeline import CashflowTimelineBuilder  # noqa: E402
-from solver.decision_engine import DecisionEngine  # noqa: E402
-from evaluation.token_tracker import TokenTracker  # noqa: E402
-from evaluation.verify_output import verify_output_file  # noqa: E402
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from code.ingestion.loader import DatasetLoader          # noqa: E402
+    from code.ingestion.validator import DatasetValidator, DatasetValidationError  # noqa: E402
+    from code.ingestion.fx_converter import FXConverter     # noqa: E402
+    from code.models.output import OUTPUT_HEADER, OutputRecord  # noqa: E402
+    from code.simulator.recurring_detector import RecurringPatternDetector  # noqa: E402
+    from code.simulator.timeline import CashflowTimelineBuilder  # noqa: E402
+    from code.solver.decision_engine import DecisionEngine  # noqa: E402
+    from code.evaluation.token_tracker import TokenTracker  # noqa: E402
+    from code.evaluation.verify_output import verify_output_file  # noqa: E402
+else:
+    from .ingestion.loader import DatasetLoader          # noqa: E402
+    from .ingestion.validator import DatasetValidator, DatasetValidationError  # noqa: E402
+    from .ingestion.fx_converter import FXConverter     # noqa: E402
+    from .models.output import OUTPUT_HEADER, OutputRecord  # noqa: E402
+    from .simulator.recurring_detector import RecurringPatternDetector  # noqa: E402
+    from .simulator.timeline import CashflowTimelineBuilder  # noqa: E402
+    from .solver.decision_engine import DecisionEngine  # noqa: E402
+    from .evaluation.token_tracker import TokenTracker  # noqa: E402
+    from .evaluation.verify_output import verify_output_file  # noqa: E402
 
 console = Console()
 
@@ -73,7 +95,7 @@ def parse_args() -> argparse.Namespace:
 
 def print_summary(ds) -> None:
     """Print a rich summary table of the loaded dataset."""
-    table = Table(title="📊 Dataset Summary", show_header=True, header_style="bold cyan")
+    table = Table(title="Dataset Summary", show_header=True, header_style="bold cyan")
     table.add_column("Table", style="bold")
     table.add_column("Count", justify="right", style="green")
 
@@ -94,7 +116,7 @@ def run(args: argparse.Namespace) -> int:
     # ── Configure log level ────────────────────────────────────────────────────
     logging.getLogger().setLevel(args.log_level)
 
-    console.rule("[bold blue]Buy or Wait? — Financial Decision Agent[/bold blue]")
+    console.rule("[bold blue]Buy or Wait? -- Financial Decision Agent[/bold blue]")
     rprint(f"[bold]Dataset:[/bold] {args.dataset.resolve()}")
     rprint(f"[bold]Output:[/bold]  {args.output.resolve()}")
     console.print()
@@ -112,13 +134,13 @@ def run(args: argparse.Namespace) -> int:
         try:
             report = validator.validate(ds)
         except DatasetValidationError as exc:
-            console.print(f"[bold red]❌ Dataset validation failed:[/bold red]\n{exc}")
+            console.print(f"[bold red][ERROR] Dataset validation failed:[/bold red]\n{exc}")
             return 1
 
     if report.warnings:
-        console.print(f"[yellow]⚠  {len(report.warnings)} warning(s) — see log for details.[/yellow]")
+        console.print(f"[yellow][WARN] {len(report.warnings)} warning(s) -- see log for details.[/yellow]")
     else:
-        console.print("[green]✓ Dataset validation passed.[/green]")
+        console.print("[green][PASS] Dataset validation passed.[/green]")
 
     if args.validate_only:
         console.print("[dim]--validate-only flag set. Exiting.[/dim]")

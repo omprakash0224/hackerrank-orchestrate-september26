@@ -276,7 +276,7 @@ class ConflictResolver:
         direction = 1 if event.is_credit else -1
 
         # Cancelled / scam — exclude entirely
-        if msg.message_type in (MSG_PRIZE_SCAM, MSG_INVESTMENT_UNREALIZED):
+        if msg.message_type in (MSG_PRIZE_SCAM, MSG_INVESTMENT_UNREALIZED, "cancellation", "cancelled"):
             return (
                 Decimal("0"),
                 currency,

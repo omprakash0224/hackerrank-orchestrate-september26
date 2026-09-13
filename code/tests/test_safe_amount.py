@@ -33,45 +33,48 @@ def _make_timeline(
     """Helper to construct a CashflowTimeline with daily debits/credits."""
     tl = CashflowTimeline(
         user_id="user_test",
+        home_currency="USD",
         request_date=request_date,
+        horizon_days=days,
         initial_balance=initial_balance,
         minimum_balance_to_keep=min_balance,
-        horizon_days=days,
     )
-    # Populate daily timeline
-    cur_date = request_date
+    bal = initial_balance
     for i in range(days + 1):
         d_date = request_date + datetime.timedelta(days=i)
-        items = []
+        tl.dates.append(d_date)
+        dc = DailyCashflow(date=d_date)
         if future_debits:
             for d, amt in future_debits:
                 if d == d_date:
-                    items.append(
+                    dc.outflows.append(
                         CashflowItem(
-                            event_id=f"deb_{i}",
-                            date=d,
-                            amount=amt,
-                            direction=EventDirection.DEBIT,
+                            item_id=f"deb_{i}",
                             category="rent",
                             description="Rent payment",
-                            is_confirmed=True,
+                            amount=amt,
+                            direction="outflow",
                         )
                     )
+                    bal -= amt
         if future_credits:
             for d, amt in future_credits:
                 if d == d_date:
-                    items.append(
+                    dc.inflows.append(
                         CashflowItem(
-                            event_id=f"cred_{i}",
-                            date=d,
-                            amount=amt,
-                            direction=EventDirection.CREDIT,
+                            item_id=f"cred_{i}",
                             category="salary",
                             description="Salary",
-                            is_confirmed=True,
+                            amount=amt,
+                            direction="inflow",
                         )
                     )
-        tl.daily_flows[d_date] = DailyCashflow(date=d_date, items=items)
+                    bal += amt
+        tl.daily_cashflows[d_date] = dc
+        tl.baseline_balances[d_date] = bal
+
+    tl.min_baseline_balance = min(tl.baseline_balances.values())
+    tl.min_baseline_buffer = tl.min_baseline_balance - min_balance
     return tl
 
 

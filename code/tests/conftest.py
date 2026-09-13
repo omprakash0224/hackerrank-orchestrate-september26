@@ -14,7 +14,14 @@ import datetime
 from decimal import Decimal
 from typing import Optional
 
-import pytest
+try:
+    import pytest
+except ImportError:
+    class _MockPytest:
+        @staticmethod
+        def fixture(fn):
+            return fn
+    pytest = _MockPytest()  # type: ignore
 
 from code.models.enums import EventDirection, EventStatus, Flexibility
 from code.models.event import FinancialEvent

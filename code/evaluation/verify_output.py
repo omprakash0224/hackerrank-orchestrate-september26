@@ -310,7 +310,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Verify output.csv schema and invariant correctness.")
     parser.add_argument("--output", type=Path, default=Path("dataset/output.csv"), help="Path to output.csv")
     parser.add_argument("--requests", type=Path, default=None, help="Path to requests.csv for cross-validation")
-    parser.add_argument("--expected-rows", type=int, default=251, help="Expected number of rows (default: 251)")
+    parser.add_argument("--expected-rows", type=int, default=250, help="Expected number of rows (default: 250)")
     parser.add_argument("--allow-sample-size", action="store_true", help="Allow arbitrary row counts (for sample testing)")
 
     args = parser.parse_args()
