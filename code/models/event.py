@@ -10,7 +10,7 @@ import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .enums import EventDirection, EventStatus, Flexibility
 
@@ -29,7 +29,7 @@ class FinancialEvent(BaseModel):
     amount: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
     currency: str = Field(min_length=3, max_length=3)
     event_date: datetime.date
-    settlement_date: datetime.date
+    settlement_date: Optional[datetime.date] = None
     status: EventStatus
     linked_event_id: Optional[str] = None
     flexibility: Optional[Flexibility] = None
@@ -39,6 +39,19 @@ class FinancialEvent(BaseModel):
     @classmethod
     def upper_currency(cls, v: object) -> str:
         return str(v).strip().upper()
+
+    @field_validator("settlement_date", mode="before")
+    @classmethod
+    def parse_optional_settlement_date(cls, v: object) -> Optional[datetime.date]:
+        if v is None or str(v).strip() == "":
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def default_settlement_date(self) -> "FinancialEvent":
+        if self.settlement_date is None:
+            object.__setattr__(self, "settlement_date", self.event_date)
+        return self
 
     @field_validator("amount", "minimum_allowed_amount", mode="before")
     @classmethod

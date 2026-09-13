@@ -51,4 +51,7 @@ class Flexibility(StrEnum):
     """Whether a recurring expense can be adjusted."""
 
     FIXED = "fixed"
+    REDUCIBLE = "reducible"
+    STOPPABLE = "stoppable"
+    REDUCIBLE_OR_STOPPABLE = "reducible_or_stoppable"
     FLEXIBLE = "flexible"

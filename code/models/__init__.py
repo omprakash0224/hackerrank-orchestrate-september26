@@ -5,6 +5,7 @@ from .enums import AffordabilityStatus, EventDirection, EventStatus, Flexibility
 from .event import FinancialEvent
 from .output import OutputRecord
 from .payment_option import SellerPaymentOption
+from .plan import CandidatePlan, SpendingAction, format_amount_str
 from .profile import FinancialProfile
 from .request import EvaluationRequest
 
@@ -17,6 +18,9 @@ __all__ = [
     "FinancialEvent",
     "OutputRecord",
     "SellerPaymentOption",
+    "CandidatePlan",
+    "SpendingAction",
+    "format_amount_str",
     "FinancialProfile",
     "EvaluationRequest",
 ]

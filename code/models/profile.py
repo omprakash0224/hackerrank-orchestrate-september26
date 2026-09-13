@@ -58,6 +58,13 @@ class FinancialProfile(BaseModel):
     def upper_currency(cls, v: object) -> str:
         return str(v).strip().upper()
 
+    @field_validator("max_installment_months", mode="before")
+    @classmethod
+    def parse_optional_months(cls, v: object) -> Optional[int]:
+        if v is None or str(v).strip() == "":
+            return None
+        return int(str(v).strip())
+
     @model_validator(mode="after")
     def validate_balance_exceeds_minimum(self) -> "FinancialProfile":
         """Warn (but don't fail) if available balance is already below minimum."""
